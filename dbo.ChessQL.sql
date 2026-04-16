@@ -20,34 +20,29 @@ BEGIN
     -- =========================================================
     -- Variable declarations
     -- =========================================================
-    DECLARE @FromColumn VARCHAR(1);
-    DECLARE @FromRow VARCHAR(1);
-    DECLARE @ToColumn VARCHAR(1);
-    DECLARE @ToRow VARCHAR(1);
+    DECLARE @FromColumn VARCHAR(10);
+    DECLARE @FromRow VARCHAR(10);
+    DECLARE @ToColumn VARCHAR(10);
+    DECLARE @ToRow VARCHAR(10);
     DECLARE @SQL NVARCHAR(MAX);
     DECLARE @IsTableExist BIT;
     DECLARE @Piece NVARCHAR(100);
     DECLARE @Turn VARCHAR(10);
     DECLARE @SortOrder NVARCHAR(4);
 
-    -- Pawn validation
+    -- Shared coordinate integers (all validators reuse these)
     DECLARE @FromRowNum INT;
     DECLARE @ToRowNum INT;
-    DECLARE @MidRowNum INT; -- pre-computed jump-over row (no inline expr in EXEC)
     DECLARE @FromColOrd INT;
     DECLARE @ToColOrd INT;
-    DECLARE @RowDiff INT;
+    DECLARE @RowDiff INT; -- may be signed or ABS depending on context
     DECLARE @ColDiff INT;
-    DECLARE @Dir INT;
-    DECLARE @StartRow INT;
-    DECLARE @MidPiece NVARCHAR(100);
-    DECLARE @TargetPiece NVARCHAR(100);
 
-    CREATE TABLE #tmpMessage
+    CREATE TABLE [#tmpMessage]
     (
-        MessageID INT IDENTITY(1, 1),
-        MessageText NVARCHAR(500),
-        CreatedAt DATETIME
+        [MessageID] INT IDENTITY(1, 1),
+        [MessageText] NVARCHAR(500),
+        [CreatedAt] DATETIME
             DEFAULT GETDATE()
     );
 
@@ -80,13 +75,13 @@ BEGIN
        AND ISNULL(@IsDropTable, 0) = 1
     BEGIN
         SET @SQL = N'DROP TABLE ' + QUOTENAME(@TargetTable);
-        EXEC sp_executesql @SQL;
+        EXEC [sp_executesql] @SQL;
         COMMIT TRAN;
         RETURN;
     END;
 
     -- =========================================================
-    -- Create / reset the board
+    -- Create / reset board
     -- =========================================================
     IF @IsTableExist = 0
        OR ISNULL(@IsReset, 0) = 1
@@ -103,14 +98,15 @@ BEGIN
                     Piece  NVARCHAR(MAX),
                     Moves  INT
                 )';
-            EXEC sp_executesql @SQL;
+            EXEC [sp_executesql] @SQL;
         END;
         ELSE
         BEGIN
             SET @SQL = N'TRUNCATE TABLE ' + QUOTENAME(@TargetTable);
-            EXEC sp_executesql @SQL;
+            EXEC [sp_executesql] @SQL;
         END;
 
+        -- Row 1 = White back rank, Row 8 = Black back rank
         SET @SQL
             = N'
             INSERT INTO ' + QUOTENAME(@TargetTable)
@@ -140,13 +136,11 @@ BEGIN
             (8,''A'',N''♜'',0),(8,''B'',N''♞'',0),(8,''C'',N''♝'',0),(8,''D'',N''♛'',0),
             (8,''E'',N''♚'',0),(8,''F'',N''♝'',0),(8,''G'',N''♞'',0),(8,''H'',N''♜'',0)
         ';
-        EXEC sp_executesql @SQL;
+        EXEC [sp_executesql] @SQL;
     END;
 
     -- =========================================================
-    -- Parse coordinates
-    -- Format: letter then digit, e.g. 'E2'
-    -- @FromColumn = letter (Col), @FromRow = digit char (RowNum)
+    -- Parse coordinates  e.g. 'E2' -> Col='E', RowNum='2'
     -- =========================================================
     SET @FromColumn = LEFT(@From, 1);
     SET @FromRow = SUBSTRING(@From, 2, 1);
@@ -154,13 +148,13 @@ BEGIN
     SET @ToRow = SUBSTRING(@To, 2, 1);
 
     -- =========================================================
-    -- Determine whose turn it is
+    -- Whose turn?
     -- =========================================================
     SET @SQL = N'
         SELECT @TurnOut = IIF((MAX(Moves) + 1) % 2 = 0, ''BLACK'', ''WHITE'')
         FROM ' + QUOTENAME(@TargetTable);
 
-    EXEC sp_executesql @SQL, N'@TurnOut NVARCHAR(10) OUTPUT', @Turn OUTPUT;
+    EXEC [sp_executesql] @SQL, N'@TurnOut NVARCHAR(10) OUTPUT', @Turn OUTPUT;
 
     -- =========================================================
     -- Basic guard checks
@@ -168,18 +162,18 @@ BEGIN
     IF (@Turn NOT LIKE '%' + @Side + '%')
        AND ISNULL(@IsViewOnly, 0) = 0
        AND ISNULL(@IsRevertMove, 0) = 0
-        INSERT INTO #tmpMessage
+        INSERT INTO [#tmpMessage]
         VALUES
         ('It''s not your turn yet', GETDATE());
 
     IF NULLIF(@Side, '') IS NULL
-        INSERT INTO #tmpMessage
+        INSERT INTO [#tmpMessage]
         VALUES
         ('Select your side', GETDATE());
 
     IF NULLIF(@To, '') IS NULL
        OR NULLIF(@From, '') IS NULL
-        INSERT INTO #tmpMessage
+        INSERT INTO [#tmpMessage]
         VALUES
         ('No coordinates provided', GETDATE());
 
@@ -188,12 +182,11 @@ BEGIN
     -- =========================================================
     IF
     (
-        SELECT COUNT(*)FROM #tmpMessage
+        SELECT COUNT(*)FROM [#tmpMessage]
     ) = 0
     AND ISNULL(@IsViewOnly, 0) = 0
     BEGIN
-        -- Fetch the piece on the FROM square.
-        -- RowNum is INT; CAST inside the query avoids a type mismatch.
+        -- Fetch the moving piece
         SET @SQL
             = N'
             SELECT @PieceOut = Piece
@@ -202,198 +195,60 @@ BEGIN
             WHERE  RowNum = CAST(@FromRow AS INT)
             AND    Col    = @FromCol';
 
-        EXEC sp_executesql @SQL,
-                           N'@FromRow CHAR(1), @FromCol CHAR(1), @PieceOut NVARCHAR(100) OUTPUT',
-                           @FromRow,
-                           @FromColumn,
-                           @Piece OUTPUT;
+        EXEC [sp_executesql] @SQL,
+                             N'@FromRow CHAR(1), @FromCol CHAR(1), @PieceOut NVARCHAR(100) OUTPUT',
+                             @FromRow,
+                             @FromColumn,
+                             @Piece OUTPUT;
 
         IF NULLIF(@Piece, '') IS NULL
-           AND NULLIF(@IsRevertMove, 0) IS NULL
-            INSERT INTO #tmpMessage
+           AND NULLIF(@IsReset, 0) IS NULL
+            INSERT INTO [#tmpMessage]
             VALUES
             ('No piece on the selected square', GETDATE());
 
-        -- =====================================================
-        -- PAWN VALIDATION
-        -- Runs when the moving piece is a pawn (White: N'♙', Black: N'♟')
-        -- =====================================================
-        IF (NULLIF(@IsRevertMove, 0) IS NULL)
-        BEGIN
-            IF
-            (
-                SELECT COUNT(*)FROM #tmpMessage
-            ) = 0
-            AND @Piece IN ( N'♙', N'♟' )
-            BEGIN
-                SET @FromRowNum = CAST(@FromRow AS INT);
-                SET @ToRowNum = CAST(@ToRow AS INT);
-                SET @FromColOrd = ASCII(@FromColumn) - ASCII('A') + 1;
-                SET @ToColOrd = ASCII(@ToColumn) - ASCII('A') + 1;
-
-
-                SELECT @FromRowNum;
-                SELECT @ToRowNum;
-                SELECT @FromColOrd;
-                SELECT @ToColOrd;
-
-                SET @RowDiff = @ToRowNum - @FromRowNum;
-                SET @ColDiff = ABS(@ToColOrd - @FromColOrd);
-
-                -- White moves toward row 8 (+1); Black toward row 1 (-1)
-                SET @Dir = CASE
-                               WHEN @Side = 'WHITE' THEN
-                                   1
-                               ELSE
-                                   -1
-                           END;
-
-                -- -------------------------------------------------
-                -- Rule 1: Must advance in the correct direction
-                -- -------------------------------------------------
-                IF @RowDiff * @Dir <= 0
-                BEGIN
-                    INSERT INTO #tmpMessage
-                    VALUES
-                    ('Pawns cannot move backwards', GETDATE());
-                END;
-
-                -- -------------------------------------------------
-                -- Rule 2: Forward move (same column)
-                -- -------------------------------------------------
-                ELSE IF @ColDiff = 0
-                BEGIN
-                    -- Destination must be empty
-                    SET @SQL
-                        = N'
-                    SELECT @POut = Piece
-                    FROM   ' + QUOTENAME(@TargetTable)
-                          + N'
-                    WHERE  RowNum = CAST(@ToRow AS INT)
-                    AND    Col    = @ToCol';
-
-                    EXEC sp_executesql @SQL,
-                                       N'@ToRow CHAR(1), @ToCol CHAR(1), @POut NVARCHAR(100) OUTPUT',
-                                       @ToRow,
-                                       @ToColumn,
-                                       @TargetPiece OUTPUT;
-
-                    IF NULLIF(@TargetPiece, '') IS NOT NULL
-                    BEGIN
-                        INSERT INTO #tmpMessage
-                        VALUES
-                        ('Cannot move forward into an occupied square', GETDATE());
-                    END;
-
-                    -- Double-square advance from starting rank
-                    ELSE IF ABS(@RowDiff) = 2
-                    BEGIN
-                        SET @StartRow = CASE
-                                            WHEN @Side = 'WHITE' THEN
-                                                2
-                                            ELSE
-                                                7
-                                        END;
-                        -- Pre-compute the intermediate row so no expression appears in EXEC params
-                        SET @MidRowNum = @FromRowNum + @Dir;
-
-                        IF @FromRowNum <> @StartRow
-                        BEGIN
-                            INSERT INTO #tmpMessage
-                            VALUES
-                            ('Double move only allowed from the starting row', GETDATE());
-                        END;
-                        ELSE
-                        BEGIN
-                            -- The skipped-over square must also be empty
-                            SET @SQL
-                                = N'
-                            SELECT @MidOut = Piece
-                            FROM   ' + QUOTENAME(@TargetTable)
-                                  + N'
-                            WHERE  RowNum = @MidRow
-                            AND    Col    = @MidCol';
-
-                            EXEC sp_executesql @SQL,
-                                               N'@MidRow INT, @MidCol CHAR(1), @MidOut NVARCHAR(100) OUTPUT',
-                                               @MidRowNum,
-                                               @FromColumn,
-                                               @MidPiece OUTPUT;
-
-                            IF NULLIF(@MidPiece, '') IS NOT NULL
-                                INSERT INTO #tmpMessage
-                                VALUES
-                                ('Cannot jump over a piece', GETDATE());
-                        END;
-                    END;
-
-                    ELSE IF ABS(@RowDiff) <> 1
-                    BEGIN
-                        INSERT INTO #tmpMessage
-                        VALUES
-                        ('Pawn can only move 1 square forward (or 2 from its starting row)', GETDATE());
-                    END;
-                END;
-
-                -- -------------------------------------------------
-                -- Rule 3: Diagonal capture (1 column, 1 row)
-                -- -------------------------------------------------
-                ELSE IF @ColDiff = 1
-                        AND ABS(@RowDiff) = 1
-                BEGIN
-                    SET @SQL
-                        = N'
-                    SELECT @POut = Piece
-                    FROM   ' + QUOTENAME(@TargetTable)
-                          + N'
-                    WHERE  RowNum = CAST(@ToRow AS INT)
-                    AND    Col    = @ToCol';
-
-                    EXEC sp_executesql @SQL,
-                                       N'@ToRow CHAR(1), @ToCol CHAR(1), @POut NVARCHAR(100) OUTPUT',
-                                       @ToRow,
-                                       @ToColumn,
-                                       @TargetPiece OUTPUT;
-
-                    IF NULLIF(@TargetPiece, '') IS NULL
-                    BEGIN
-                        INSERT INTO #tmpMessage
-                        VALUES
-                        ('Pawns can only capture diagonally on an occupied square', GETDATE());
-                    END;
-                    ELSE IF (
-                                @Side = 'WHITE'
-                                AND @TargetPiece IN ( N'♙', N'♖', N'♘', N'♗', N'♕', N'♔' )
-                            )
-                            OR
-                            (
-                                @Side = 'BLACK'
-                                AND @TargetPiece IN ( N'♟', N'♜', N'♞', N'♝', N'♛', N'♚' )
-                            )
-                    BEGIN
-                        INSERT INTO #tmpMessage
-                        VALUES
-                        ('Cannot capture your own piece', GETDATE());
-                    END;
-                END;
-
-                -- -------------------------------------------------
-                -- Rule 4: Any other geometry is illegal for a pawn
-                -- -------------------------------------------------
-                ELSE
-                BEGIN
-                    INSERT INTO #tmpMessage
-                    VALUES
-                    ('Invalid pawn move', GETDATE());
-                END;
-            END; -- end pawn validation
-        END;
-        -- =====================================================
-        -- Apply the move when all validation passes
-        -- =====================================================
         IF
         (
-            SELECT COUNT(*)FROM #tmpMessage
+            SELECT COUNT(*)FROM [#tmpMessage]
+        ) = 0
+        AND NULLIF(@IsRevertMove, 0) IS NULL
+        AND NULLIF(@IsReset, 0) IS NULL
+        BEGIN
+
+
+            SET @FromRowNum = CAST(@FromRow AS INT);
+            SET @ToRowNum = CAST(@ToRow AS INT);
+            SET @FromColOrd = ASCII(@FromColumn) - ASCII('A') + 1;
+            SET @ToColOrd = ASCII(@ToColumn) - ASCII('A') + 1;
+
+
+            -- =======================================================
+            -- HELPER: fetch destination piece (reused by every validator)
+            -- =======================================================
+            -- (done inside each block so @TargetPiece is always fresh)
+
+            -- =======================================================
+            -- PAWN 
+            -- =======================================================
+            SET @RowDiff = @ToRowNum - @FromRowNum; -- signed
+            SET @ColDiff = ABS(@ToColOrd - @FromColOrd);
+
+            EXEC [dbo].[pr_Pawn_Validation] @FromRow = @FromRow,         -- varchar(1)
+                                            @FromColumn = @FromColumn,   -- varchar(1)
+                                            @ToRow = @ToRow,             -- varchar(1)
+                                            @ToColumn = @ToColumn,       -- varchar(1)
+                                            @RowDiff = @RowDiff,         -- int
+                                            @ColDiff = @ColDiff,         -- int
+                                            @Piece = @Piece,
+                                            @Side = @Side,               -- varchar(10)
+                                            @TargetTable = @TargetTable; -- sysname
+        END;
+        -- =======================================================
+        -- Apply the move when all validation passes
+        -- =======================================================
+        IF
+        (
+            SELECT COUNT(*)FROM [#tmpMessage]
         ) = 0
         AND NULLIF(@IsReset, 0) IS NULL
         BEGIN
@@ -413,26 +268,26 @@ BEGIN
                 SET    Moves = Moves + 1;
             ';
 
-            EXEC sp_executesql @SQL,
-                               N'@Piece NVARCHAR(100), @FromRow CHAR(1), @FromCol CHAR(1), @ToRow CHAR(1), @ToCol CHAR(1)',
-                               @Piece,
-                               @FromRow,
-                               @FromColumn,
-                               @ToRow,
-                               @ToColumn;
+            EXEC [sp_executesql] @SQL,
+                                 N'@Piece NVARCHAR(100), @FromRow CHAR(1), @FromCol CHAR(1), @ToRow CHAR(1), @ToCol CHAR(1)',
+                                 @Piece,
+                                 @FromRow,
+                                 @FromColumn,
+                                 @ToRow,
+                                 @ToColumn;
         END;
     END; -- end move processing
 
     -- =========================================================
     -- Return any validation messages
     -- =========================================================
-    IF EXISTS (SELECT 1 FROM #tmpMessage)
+    IF EXISTS (SELECT 1 FROM [#tmpMessage])
         SELECT *
-        FROM #tmpMessage;
+        FROM [#tmpMessage];
 
     -- =========================================================
-    -- Return the board as a pivot
-    -- White view: row 8 at top (DESC); Black view: row 1 at top (ASC)
+    -- Return the board as a pivot (rank x file)
+    -- White view: row 8 at top; Black view: row 1 at top
     -- =========================================================
     SET @SortOrder = CASE
                          WHEN @Side = 'WHITE' THEN
@@ -456,11 +311,44 @@ BEGIN
         ORDER BY RowNum ' + @SortOrder + N';
     ';
 
-    EXEC sp_executesql @SQL;
+    EXEC [sp_executesql] @SQL;
 
-    DROP TABLE IF EXISTS #tmpMessage;
+    DROP TABLE IF EXISTS [#tmpMessage];
 
     COMMIT TRAN;
 END;
 GO
 
+-- =========================================================
+-- Quick-start examples
+-- =========================================================
+
+-- Reset / create the board
+--EXEC [dbo].[ChessQL] @Side = 'White',           -- varchar(10)
+--                     @TargetTable = 'ChessRowCol',  -- sysname
+--                     @IsDropTable = NULL,  -- bit
+--                     @IsReset = 0,      -- bit
+--                     @From = '',           -- varchar(2)
+--                     @To = '',             -- varchar(2)
+--                     @IsRevertMove = NULL, -- bit
+--                     @IsViewOnly = NULL    -- bit
+
+-- View the board without making a move
+--EXEC [dbo].[ChessQL] @Side = 'White',           -- varchar(10)
+--                     @TargetTable = 'ChessRowCol',  -- sysname
+--                     @IsDropTable = NULL,  -- bit
+--                     @IsReset = 0,      -- bit
+--                     @From = '',           -- varchar(2)
+--                     @To = '',             -- varchar(2)
+--                     @IsRevertMove = NULL, -- bit
+--                     @IsViewOnly = 1    -- bit
+
+-- White pawn: E2 to E4 (double advance)
+--EXEC [dbo].[ChessQL] @Side = 'White',           -- varchar(10)
+--                     @TargetTable = 'ChessRowCol',  -- sysname
+--                     @IsDropTable = NULL,  -- bit
+--                     @IsReset = 0,      -- bit
+--                     @From = 'A2',           -- varchar(2)
+--                     @To = 'A4',             -- varchar(2)
+--                     @IsRevertMove = NULL, -- bit
+--                     @IsViewOnly = NULL    -- bit
