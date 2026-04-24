@@ -1,7 +1,7 @@
 ﻿SET QUOTED_IDENTIFIER ON
 SET ANSI_NULLS ON
 GO
-CREATE OR ALTER PROCEDURE [pr_Knight_Validation]
+ALTER   PROCEDURE [pr_Knight_Validation]
 (
     @RowDiff INT,
     @ColDiff INT,
@@ -18,7 +18,7 @@ BEGIN
 
     DECLARE @TargetPiece NVARCHAR(100);
 
-    IF @Piece IN ( N'♘', N'♞' )
+    IF @Piece NOT IN ( N'♘', N'♞' )
         RETURN;
 
     IF NOT (

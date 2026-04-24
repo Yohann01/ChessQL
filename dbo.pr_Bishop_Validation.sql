@@ -1,7 +1,7 @@
-﻿SET QUOTED_IDENTIFIER ON;
-SET ANSI_NULLS ON;
+﻿SET QUOTED_IDENTIFIER ON
+SET ANSI_NULLS ON
 GO
-CREATE OR ALTER PROCEDURE [pr_Bishop_Validation]
+ALTER   PROCEDURE [pr_Bishop_Validation]
 (
     @RowDiff INT,
     @ColDiff INT,
@@ -29,7 +29,7 @@ BEGIN
     DECLARE @CurColChar CHAR(1);
     DECLARE @PathBlocked BIT;
 
-    IF @Piece IN ( N'♗', N'♝' )
+    IF @Piece NOT IN ( N'♗', N'♝' )
         RETURN;
 
 

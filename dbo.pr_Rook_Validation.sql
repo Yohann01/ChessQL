@@ -1,7 +1,7 @@
-﻿SET QUOTED_IDENTIFIER ON;
-SET ANSI_NULLS ON;
+﻿SET QUOTED_IDENTIFIER ON
+SET ANSI_NULLS ON
 GO
-CREATE OR ALTER PROCEDURE [pr_Rook_Validation]
+ALTER   PROCEDURE [pr_Rook_Validation]
 (
     @RowDiff INT,
     @ColDiff INT,
@@ -30,7 +30,7 @@ BEGIN
     DECLARE @CurColChar CHAR(1);
     DECLARE @PathBlocked BIT;
 
-    IF @Piece IN ( N'♖', N'♜' )
+    IF @Piece NOT IN ( N'♖', N'♜' )
         RETURN;
 
     SET @RowDiff = ABS(@ToRowNum - @FromRowNum);
