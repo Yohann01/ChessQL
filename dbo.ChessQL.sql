@@ -2,7 +2,7 @@
 SET ANSI_NULLS ON;
 GO
 
-CREATE OR ALTER PROCEDURE [ChessQL]
+ALTER PROCEDURE [ChessQL]
 (
     @Side VARCHAR(10),
     @TargetTable sysname,
@@ -162,8 +162,8 @@ BEGIN
     -- Basic guard checks
     -- =========================================================
     IF (@Turn NOT LIKE '%' + @Side + '%')
-       AND ISNULL(@IsViewOnly, 0) = 0
-       AND ISNULL(@IsRevertMove, 0) = 0
+       AND NULLIF(@IsViewOnly, 0) IS NULL
+       AND NULLIF(@IsRevertMove, 0) IS NULL
         INSERT INTO [#tmpMessage]
         VALUES
         ('It''s not your turn yet', GETDATE());
@@ -205,6 +205,7 @@ BEGIN
 
         IF NULLIF(@Piece, '') IS NULL
            AND NULLIF(@IsReset, 0) IS NULL
+           AND ISNULL(@IsRevertMove, 0) IS NULL
             INSERT INTO [#tmpMessage]
             VALUES
             ('No piece on the selected square', GETDATE());
@@ -249,7 +250,7 @@ BEGIN
             -- KNIGHT
             -- =======================================================
 
-            EXEC [dbo].[pr_Knight_Validation] @RowDiff = @RowDiff,         -- int
+            EXEC [dbo].[pr_Knight_Validation] @RowDiff = @RowDiff,
                                               @ColDiff = @ColDiff,         -- int
                                               @ToRow = @ToRow,             -- varchar(10)
                                               @ToColumn = @ToColumn,       -- varchar(10)
@@ -272,33 +273,90 @@ BEGIN
                                               @Side = @Side,               -- varchar(10)
                                               @TargetTable = @TargetTable; -- sysname
 
+            -- =======================================================
+            -- ROOK
+            -- =======================================================
+
+            EXEC [dbo].[pr_Rook_Validation] @RowDiff = @RowDiff,         -- int
+                                            @ColDiff = @ColDiff,         -- int
+                                            @FromRowNum = @FromRowNum,   -- int
+                                            @ToRowNum = @ToRowNum,       -- int
+                                            @FromColOrd = @FromColOrd,   -- int
+                                            @ToColOrd = @ToColOrd,       -- int
+                                            @ToRow = @ToRow,             -- varchar(10)
+                                            @ToColumn = @ToColumn,       -- varchar(10)
+                                            @Piece = @Piece,             -- nvarchar(100)
+                                            @Side = @Side,               -- varchar(10)
+                                            @TargetTable = @TargetTable; -- sysname
+
+
 
         END;
         -- =======================================================
         -- Apply the move when all validation passes
         -- =======================================================
+
+
+
+        IF NULLIF(@IsRevertMove, 0) IS NULL
+        BEGIN
+            SET @SQL
+                = N'
+						UPDATE ' + QUOTENAME(@TargetTable)
+                  + N'
+						SET    Piece = @Piece
+						WHERE  RowNum = CAST(@ToRow AS INT) AND Col = @ToCol;
+
+						UPDATE ' + QUOTENAME(@TargetTable)
+                  + N'
+						SET    Piece = N''''
+						WHERE  RowNum = CAST(@FromRow AS INT) AND Col = @FromCol;
+
+						UPDATE ' + QUOTENAME(@TargetTable) + N'
+						SET    Moves = Moves + 1; ';
+        END;
+        ELSE IF NULLIF(@IsRevertMove, 0) IS NOT NULL
+                AND NULLIF(@IsReset, 0) IS NULL
+        BEGIN
+            SET @SQL
+                = N'
+					SELECT @PieceOut = Piece
+					FROM   ' + QUOTENAME(@TargetTable)
+                  + N'
+					WHERE  RowNum = CAST(@ToRow AS INT)
+					AND    Col    = @ToCol';
+
+            EXEC [sp_executesql] @SQL,
+                                 N'@ToRow CHAR(1), @ToCol CHAR(1), @PieceOut NVARCHAR(100) OUTPUT',
+                                 @ToRow,
+                                 @ToColumn,
+                                 @Piece OUTPUT;
+
+            IF NULLIF(@Piece, '') IS NULL
+                INSERT INTO [#tmpMessage]
+                VALUES
+                ('No piece on the selected square', GETDATE());
+
+            SET @SQL
+                = N'
+					UPDATE ' + QUOTENAME(@TargetTable)
+                  + N'
+					SET    Piece = @Piece
+					WHERE  RowNum = CAST(@FromRow AS INT) AND Col = @FromCol;
+
+					UPDATE ' + QUOTENAME(@TargetTable)
+                  + N'
+					SET    Piece = N''''
+					WHERE  RowNum = CAST(@ToRow AS INT) AND Col = @ToCol;';
+        END;
+
+
         IF
         (
             SELECT COUNT(*)FROM [#tmpMessage]
         ) = 0
         AND NULLIF(@IsReset, 0) IS NULL
         BEGIN
-            SET @SQL
-                = N'
-                UPDATE ' + QUOTENAME(@TargetTable)
-                  + N'
-                SET    Piece = @Piece
-                WHERE  RowNum = CAST(@ToRow AS INT) AND Col = @ToCol;
-
-                UPDATE ' + QUOTENAME(@TargetTable)
-                  + N'
-                SET    Piece = N''''
-                WHERE  RowNum = CAST(@FromRow AS INT) AND Col = @FromCol;
-
-                UPDATE ' + QUOTENAME(@TargetTable) + N'
-                SET    Moves = Moves + 1;
-            ';
-
             EXEC [sp_executesql] @SQL,
                                  N'@Piece NVARCHAR(100), @FromRow CHAR(1), @FromCol CHAR(1), @ToRow CHAR(1), @ToCol CHAR(1)',
                                  @Piece,
@@ -307,6 +365,8 @@ BEGIN
                                  @ToRow,
                                  @ToColumn;
         END;
+
+
     END; -- end move processing
 
     -- =========================================================
@@ -350,36 +410,3 @@ BEGIN
 END;
 GO
 
--- =========================================================
--- Quick-start examples
--- =========================================================
-
--- Reset / create the board
---EXEC [dbo].[ChessQL] @Side = 'White',           -- varchar(10)
---                     @TargetTable = 'ChessRowCol',  -- sysname
---                     @IsDropTable = NULL,  -- bit
---                     @IsReset = 0,      -- bit
---                     @From = '',           -- varchar(2)
---                     @To = '',             -- varchar(2)
---                     @IsRevertMove = NULL, -- bit
---                     @IsViewOnly = NULL    -- bit
-
--- View the board without making a move
---EXEC [dbo].[ChessQL] @Side = 'White',           -- varchar(10)
---                     @TargetTable = 'ChessRowCol',  -- sysname
---                     @IsDropTable = NULL,  -- bit
---                     @IsReset = 0,      -- bit
---                     @From = '',           -- varchar(2)
---                     @To = '',             -- varchar(2)
---                     @IsRevertMove = NULL, -- bit
---                     @IsViewOnly = 1    -- bit
-
--- White pawn: E2 to E4 (double advance)
---EXEC [dbo].[ChessQL] @Side = 'White',           -- varchar(10)
---                     @TargetTable = 'ChessRowCol',  -- sysname
---                     @IsDropTable = NULL,  -- bit
---                     @IsReset = 0,      -- bit
---                     @From = 'A2',           -- varchar(2)
---                     @To = 'A4',             -- varchar(2)
---                     @IsRevertMove = NULL, -- bit
---                     @IsViewOnly = NULL    -- bit
