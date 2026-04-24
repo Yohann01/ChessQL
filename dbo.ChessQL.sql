@@ -38,6 +38,8 @@ BEGIN
     DECLARE @RowDiff INT; -- may be signed or ABS depending on context
     DECLARE @ColDiff INT;
 
+
+
     CREATE TABLE [#tmpMessage]
     (
         [MessageID] INT IDENTITY(1, 1),
@@ -242,6 +244,35 @@ BEGIN
                                             @Piece = @Piece,
                                             @Side = @Side,               -- varchar(10)
                                             @TargetTable = @TargetTable; -- sysname
+
+            -- =======================================================
+            -- KNIGHT
+            -- =======================================================
+
+            EXEC [dbo].[pr_Knight_Validation] @RowDiff = @RowDiff,         -- int
+                                              @ColDiff = @ColDiff,         -- int
+                                              @ToRow = @ToRow,             -- varchar(10)
+                                              @ToColumn = @ToColumn,       -- varchar(10)
+                                              @Piece = @Piece,             -- nvarchar(100)
+                                              @Side = @Piece,              -- varchar(10)
+                                              @TargetTable = @TargetTable; -- sysname
+
+            -- =======================================================
+            -- BISHOP
+            -- =======================================================
+            EXEC [dbo].[pr_Bishop_Validation] @RowDiff = @RowDiff,         -- int
+                                              @ColDiff = @ColDiff,         -- int
+                                              @FromRowNum = @FromRowNum,   -- int
+                                              @ToRowNum = @ToRowNum,       -- int
+                                              @FromColOrd = @FromColOrd,   -- int
+                                              @ToColOrd = @ToColOrd,       -- int
+                                              @ToRow = @ToRow,             -- varchar(10)
+                                              @ToColumn = @ToColumn,       -- varchar(10)
+                                              @Piece = @Piece,             -- nvarchar(100)
+                                              @Side = @Side,               -- varchar(10)
+                                              @TargetTable = @TargetTable; -- sysname
+
+
         END;
         -- =======================================================
         -- Apply the move when all validation passes
