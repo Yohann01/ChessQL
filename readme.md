@@ -1,5 +1,9 @@
 # ♟️ ChessQL
 
+![SQL Server](https://img.shields.io/badge/SQL%20Server-T--SQL-blue?logo=microsoftsqlserver)
+![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)
+![Status](https://img.shields.io/badge/status-active-success)
+
 ChessQL is a SQL-driven chess engine that validates and executes chess moves using stored procedures.  
 It simulates a full chess board, enforces movement rules per piece, and prevents illegal moves — all inside SQL.
 
@@ -9,57 +13,55 @@ It simulates a full chess board, enforces movement rules per piece, and prevents
 
 - ♟️ Full chess board simulation using table structure
 - ✅ Move validation per piece:
-  - Pawn (including double move + capture rules)
+  - Pawn (double move, capture rules, direction control)
   - Knight (L-shape movement)
-  - Bishop (diagonal + path blocking)
-  - Rook (straight lines + path blocking)
-- 🚫 Prevents:
-  - Illegal moves
-  - Moving through pieces
-  - Capturing your own pieces
-  - Playing out of turn
-- 🔄 Board reset and replay support
-- 📊 Board returned as pivoted grid (A–H columns)
+  - Bishop (diagonal movement + path blocking)
+  - Rook (horizontal/vertical movement + path blocking)
+- 🚫 Rule enforcement:
+  - Prevent illegal moves
+  - Prevent jumping over pieces (where applicable)
+  - Prevent capturing your own pieces
+  - Turn-based play system
+- 🔄 Board reset + replay support
+- 📊 Visual board output (pivoted A–H grid)
 
 ---
 
 ## 🧠 How It Works
 
-The system is powered by a main stored procedure:
+ChessQL is powered by a main stored procedure that orchestrates the entire game logic.
 
-### `ChessQL`
+### `ChessQL` Engine
 
-- Initializes the board
-- Parses moves (e.g. `E2 → E4`)
-- Determines turn order
-- Delegates validation to piece-specific procedures
-- Applies the move if valid
+- Initializes or resets the board
+- Parses algebraic-like input (`E2 → E4`)
+- Determines player turn
+- Calls piece-specific validation procedures
+- Executes move if valid
 
-### Piece Validators
+### Piece Validation Layer
 
-Each piece has its own validation procedure:
+Each chess piece has its own rule engine:
 
 - `pr_Pawn_Validation`
 - `pr_Knight_Validation`
 - `pr_Bishop_Validation`
 - `pr_Rook_Validation`
 
-These procedures:
-- Enforce movement rules
-- Check path blocking (for sliding pieces)
-- Validate captures
-- Return errors via `#tmpMessage`
+These enforce:
+- Movement legality
+- Path obstruction checks
+- Capture rules
+- Error messaging via `#tmpMessage`
 
 ---
 
-## 🗃️ Board Structure
+## 🗃️ Board Schema
 
-The board is stored as a table:
-
-| Column  | Description |
+| Column | Description |
 |--------|------------|
-| RowNum | 1–8 (rank) |
-| Col    | A–H (file) |
+| RowNum | Rank (1–8) |
+| Col    | File (A–H) |
 | Piece  | Unicode chess piece |
 | Moves  | Move counter |
 
@@ -70,14 +72,10 @@ The board is stored as a table:
 ### 1. Initialize / Reset Board
 
 ```sql
-EXEC [dbo].[ChessQL] @Side = 'White',           -- varchar(10)
-                     @TargetTable = 'ChessRowCol',  -- sysname
-                     @IsDropTable = NULL,  -- bit
-                     @IsReset = 1,      -- bit
-                     @From = '',           -- varchar(2)
-                     @To = '',             -- varchar(2)
-                     @IsRevertMove = NULL, -- bit
-                     @IsViewOnly = NULL    -- bit
+EXEC [dbo].[ChessQL] 
+    @Side = 'White',
+    @TargetTable = 'ChessRowCol',
+    @IsReset = 1;
 ```
 ### 2. View the board without making a move
 
