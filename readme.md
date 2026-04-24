@@ -2,7 +2,6 @@
 
 ![SQL Server](https://img.shields.io/badge/SQL%20Server-T--SQL-blue?logo=microsoftsqlserver)
 ![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)
-![Status](https://img.shields.io/badge/status-active-success)
 
 ChessQL is a SQL-driven chess engine that validates and executes chess moves using stored procedures.  
 It simulates a full chess board, enforces movement rules per piece, and prevents illegal moves — all inside SQL.
